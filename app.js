@@ -10,6 +10,11 @@ import {
   signOut
 } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
 
+// API Configuration
+const API_BASE_URL = window.location.hostname === 'localhost' 
+  ? 'http://localhost:4242' 
+  : 'https://googleauthdemo-production.up.railway.app';
+
 // Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyBB7GxfWbFidoIbEt3KMA95XgtOGq2KaUI",
@@ -24,6 +29,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
+
+// Configure Google provider to always show account picker
+provider.setCustomParameters({
+  prompt: 'select_account'
+});
 
 // Elements
 const loginBtn = document.getElementById("googleLogin");
@@ -42,12 +52,26 @@ const cancelConfirmNo = document.getElementById("cancelConfirmNo");
 loginBtn.addEventListener("click", async () => {
   try {
     console.log("Google login button clicked!");
+    console.log("Current domain:", window.location.hostname);
+    console.log("Firebase auth domain:", firebaseConfig.authDomain);
+    
     const result = await signInWithPopup(auth, provider);
     const user = result.user;
+    console.log("Sign-in successful:", user);
     userInfo.textContent = JSON.stringify(user, null, 2);
   } catch (err) {
-    console.warn("Popup failed, using redirect...", err);
-    await signInWithRedirect(auth, provider);
+    console.error("Sign-in error:", err);
+    console.error("Error code:", err.code);
+    console.error("Error message:", err.message);
+    
+    if (err.code === 'auth/unauthorized-domain') {
+      alert("Domain not authorized. Please add this domain to Firebase Console.");
+    } else if (err.code === 'auth/popup-closed-by-user') {
+      console.log("User closed the popup");
+    } else {
+      console.warn("Popup failed, using redirect...", err);
+      await signInWithRedirect(auth, provider);
+    }
   }
 });
 
@@ -87,7 +111,7 @@ onAuthStateChanged(auth, async (user) => {
     
     // Check if user has active subscription
     try {
-      const res = await fetch(`http://localhost:4242/check-subscription/${user.uid}`);
+      const res = await fetch(`${API_BASE_URL}/check-subscription/${user.uid}`);
       const data = await res.json();
       
       if (data.subscribed) {
@@ -122,6 +146,15 @@ logoutBtn.addEventListener("click", async () => {
   try {
     await signOut(auth);
     console.log("User signed out.");
+    
+    // Clear any cached Google session data
+    if (window.gapi && window.gapi.auth2) {
+      const authInstance = window.gapi.auth2.getAuthInstance();
+      if (authInstance) {
+        await authInstance.signOut();
+        console.log("Google session cleared.");
+      }
+    }
   } catch (err) {
     console.error("Sign-out error:", err);
   }
@@ -133,7 +166,7 @@ async function checkSubscriptionStatus() {
   if (!user) return false;
   
   try {
-    const res = await fetch(`http://localhost:4242/check-subscription/${user.uid}`);
+    const res = await fetch(`${API_BASE_URL}/check-subscription/${user.uid}`);
     const data = await res.json();
     return data.subscribed;
   } catch (err) {
@@ -148,7 +181,7 @@ async function refreshSubscriptionStatus() {
   
   try {
     // Use force refresh to bypass cache and check Stripe directly
-    const res = await fetch(`http://localhost:4242/check-subscription/${user.uid}?force=true`);
+    const res = await fetch(`${API_BASE_URL}/check-subscription/${user.uid}?force=true`);
     const data = await res.json();
     
     if (data.subscribed) {
@@ -181,7 +214,7 @@ checkoutBtn?.addEventListener("click", async () => {
   }
 
   try {
-    const res = await fetch("http://localhost:4242/create-checkout-session", {
+    const res = await fetch(`${API_BASE_URL}/create-checkout-session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -212,7 +245,7 @@ refreshBtn?.addEventListener("click", async () => {
   }
 
   try {
-    const res = await fetch(`http://localhost:4242/refresh-subscription/${user.uid}`, {
+    const res = await fetch(`${API_BASE_URL}/refresh-subscription/${user.uid}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" }
     });
@@ -258,7 +291,7 @@ cancelConfirmYes?.addEventListener("click", async () => {
   cancelBtn.textContent = "Canceling...";
 
   try {
-    const res = await fetch(`http://localhost:4242/cancel-subscription/${user.uid}`, {
+    const res = await fetch(`${API_BASE_URL}/cancel-subscription/${user.uid}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" }
     });

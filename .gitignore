@@ -1,3 +1,15 @@
 node_modules
 .env
+.env.local
+.env.production
+.env.development
 serviceAccountKey.json
+*.serviceAccountKey.json
+firebase-adminsdk-*.json
+.vercel
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
