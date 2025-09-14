@@ -10,19 +10,45 @@ const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 // --- Firebase Admin Setup ---
-// Load service account key (download from Firebase Console → Project Settings → Service Accounts)
-const serviceAccount = JSON.parse(
-  readFileSync("./serviceAccountKey.json", "utf8")
-);
+// Initialize Firebase Admin with environment variables
+let db;
+try {
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  console.log("🔧 Firebase config check:");
+  console.log("- Project ID:", process.env.FIREBASE_PROJECT_ID ? "✅ Set" : "❌ Missing");
+  console.log("- Client Email:", process.env.FIREBASE_CLIENT_EMAIL ? "✅ Set" : "❌ Missing");
+  console.log("- Private Key:", privateKey ? "✅ Set" : "❌ Missing");
+  
+  if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !privateKey) {
+    throw new Error("Missing required Firebase environment variables");
+  }
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
-const db = admin.firestore();
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      privateKey: privateKey,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    }),
+  });
+  db = admin.firestore();
+  console.log("✅ Firebase Admin initialized successfully");
+} catch (error) {
+  console.log("⚠️ Firebase Admin initialization failed:", error.message);
+  console.log("⚠️ App will run with in-memory store only");
+}
 
 // --- Middleware ---
 // Stripe requires raw body for webhook signature verification
-app.use(cors());
+app.use(cors({
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'https://google-auth-demo-pi.vercel.app',
+    'https://google-auth-demo-lq6ld3kun-lenc95s-projects.vercel.app',
+    'https://google-auth-demo-5wrvx54r2-lenc95s-projects.vercel.app',
+    'https://google-auth-demo-i3mwsshrb-lenc95s-projects.vercel.app'
+  ],
+  credentials: true
+}));
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 
 // --- Create Checkout Session ---
@@ -37,8 +63,8 @@ app.post("/create-checkout-session", async (req, res) => {
         { price: process.env.STRIPE_PRICE_ID, quantity: 1 }, // Stripe price from .env
       ],
       customer_email: email,
-      success_url: "http://localhost:3000/success.html",
-      cancel_url: "http://localhost:3000/cancel.html",
+      success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/success.html`,
+      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/cancel.html`,
       metadata: { firebaseUID: uid },
     });
 
@@ -84,15 +110,20 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         }
 
         // Store in Firebase (if available)
-        try {
-          await db.collection("users").doc(uid).set({
-            subscriptionActive: true,
-            stripeCustomerId: session.customer,
-            stripeSubscriptionId: session.subscription,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-        } catch (firebaseErr) {
-          console.log("Firebase not available, using in-memory store only");
+        if (db) {
+          try {
+            await db.collection("users").doc(uid).set({
+              subscriptionActive: true,
+              stripeCustomerId: session.customer,
+              stripeSubscriptionId: session.subscription,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            console.log(`✅ Updated Firebase for user ${uid}`);
+          } catch (firebaseErr) {
+            console.log("⚠️ Firebase update failed:", firebaseErr.message);
+          }
+        } else {
+          console.log("⚠️ Firebase not available, using in-memory store only");
         }
         
         // Store in in-memory store
@@ -112,14 +143,17 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
             const subscription = await stripe.subscriptions.retrieve(subscriptionId);
             const uid = subscription.metadata.firebaseUID;
 
-            if (uid) {
-              await db.collection("users").doc(uid).set({
-                subscriptionActive: true,
-                stripeSubscriptionId: subscriptionId,
-                lastPayment: admin.firestore.FieldValue.serverTimestamp(),
-              }, { merge: true });
-
-              console.log(`💰 Payment succeeded for user ${uid}`);
+            if (uid && db) {
+              try {
+                await db.collection("users").doc(uid).set({
+                  subscriptionActive: true,
+                  stripeSubscriptionId: subscriptionId,
+                  lastPayment: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                console.log(`💰 Payment succeeded for user ${uid}`);
+              } catch (firebaseErr) {
+                console.log("⚠️ Firebase update failed:", firebaseErr.message);
+              }
             }
           } catch (err) {
             console.error("Error processing invoice payment:", err.message);
@@ -136,13 +170,18 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
         if (uid) {
           // Update Firebase (if available)
-          try {
-            await db.collection("users").doc(uid).set({
-              subscriptionActive: false,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-          } catch (firebaseErr) {
-            console.log("Firebase not available, using in-memory store only");
+          if (db) {
+            try {
+              await db.collection("users").doc(uid).set({
+                subscriptionActive: false,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+              console.log(`✅ Updated Firebase for user ${uid}`);
+            } catch (firebaseErr) {
+              console.log("⚠️ Firebase update failed:", firebaseErr.message);
+            }
+          } else {
+            console.log("⚠️ Firebase not available, using in-memory store only");
           }
           
           // Update in-memory store
@@ -159,14 +198,19 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
         if (uid) {
           // Update Firebase (if available)
-          try {
-            await db.collection("users").doc(uid).set({
-              subscriptionActive: isActive,
-              subscriptionStatus: sub.status,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-          } catch (firebaseErr) {
-            console.log("Firebase not available, using in-memory store only");
+          if (db) {
+            try {
+              await db.collection("users").doc(uid).set({
+                subscriptionActive: isActive,
+                subscriptionStatus: sub.status,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+              console.log(`✅ Updated Firebase for user ${uid}`);
+            } catch (firebaseErr) {
+              console.log("⚠️ Firebase update failed:", firebaseErr.message);
+            }
+          } else {
+            console.log("⚠️ Firebase not available, using in-memory store only");
           }
           
           // Update in-memory store
@@ -187,13 +231,18 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 
             if (uid) {
               // Update Firebase (if available)
-              try {
-                await db.collection("users").doc(uid).set({
-                  subscriptionActive: false,
-                  lastPaymentFailed: admin.firestore.FieldValue.serverTimestamp(),
-                }, { merge: true });
-              } catch (firebaseErr) {
-                console.log("Firebase not available, using in-memory store only");
+              if (db) {
+                try {
+                  await db.collection("users").doc(uid).set({
+                    subscriptionActive: false,
+                    lastPaymentFailed: admin.firestore.FieldValue.serverTimestamp(),
+                  }, { merge: true });
+                  console.log(`✅ Updated Firebase for user ${uid}`);
+                } catch (firebaseErr) {
+                  console.log("⚠️ Firebase update failed:", firebaseErr.message);
+                }
+              } else {
+                console.log("⚠️ Firebase not available, using in-memory store only");
               }
               
               // Update in-memory store
@@ -256,13 +305,18 @@ app.get("/check-subscription/:uid", async (req, res) => {
     console.log(`📊 Stripe status for ${uid}: ${isSubscribed}`);
     
     // Also update Firebase if available
-    try {
-      await db.collection("users").doc(uid).set({
-        subscriptionActive: isSubscribed,
-        lastChecked: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    } catch (firebaseErr) {
-      console.log("Firebase not available, using in-memory store only");
+    if (db) {
+      try {
+        await db.collection("users").doc(uid).set({
+          subscriptionActive: isSubscribed,
+          lastChecked: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        console.log(`✅ Updated Firebase for user ${uid}`);
+      } catch (firebaseErr) {
+        console.log("⚠️ Firebase update failed:", firebaseErr.message);
+      }
+    } else {
+      console.log("⚠️ Firebase not available, using in-memory store only");
     }
     
     res.json({ subscribed: isSubscribed });
@@ -304,13 +358,18 @@ app.post("/refresh-subscription/:uid", async (req, res) => {
     // Update both stores
     subscriptions.set(uid, isActive);
     
-    try {
-      await db.collection("users").doc(uid).set({
-        subscriptionActive: isActive,
-        lastChecked: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    } catch (firebaseErr) {
-      console.log("Firebase not available, using in-memory store only");
+    if (db) {
+      try {
+        await db.collection("users").doc(uid).set({
+          subscriptionActive: isActive,
+          lastChecked: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        console.log(`✅ Updated Firebase for user ${uid}`);
+      } catch (firebaseErr) {
+        console.log("⚠️ Firebase update failed:", firebaseErr.message);
+      }
+    } else {
+      console.log("⚠️ Firebase not available, using in-memory store only");
     }
     
     console.log(`🔄 Refreshed subscription status for ${uid}: ${isActive}`);
@@ -384,15 +443,19 @@ app.post("/cancel-subscription/:uid", async (req, res) => {
     // Only update local stores if Stripe cancellation was successful
     subscriptions.set(uid, false);
     
-    try {
-      await db.collection("users").doc(uid).set({
-        subscriptionActive: false,
-        subscriptionStatus: 'canceled',
-        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-      console.log(`✅ Updated Firebase for user ${uid}`);
-    } catch (firebaseErr) {
-      console.log("⚠️ Firebase not available, using in-memory store only:", firebaseErr.message);
+    if (db) {
+      try {
+        await db.collection("users").doc(uid).set({
+          subscriptionActive: false,
+          subscriptionStatus: 'canceled',
+          canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        console.log(`✅ Updated Firebase for user ${uid}`);
+      } catch (firebaseErr) {
+        console.log("⚠️ Firebase update failed:", firebaseErr.message);
+      }
+    } else {
+      console.log("⚠️ Firebase not available, using in-memory store only");
     }
     
     console.log(`❌ Subscription canceled for user ${uid}: ${canceledSubscription.id}`);
