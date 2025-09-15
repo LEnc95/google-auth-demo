@@ -39,15 +39,26 @@ try {
 
 // --- Middleware ---
 // Stripe requires raw body for webhook signature verification
+// Build CORS origins array dynamically
+const corsOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:3000',
+  'https://google-auth-demo-pi.vercel.app',
+  'https://google-auth-demo-lq6ld3kun-lenc95s-projects.vercel.app',
+  'https://google-auth-demo-5wrvx54r2-lenc95s-projects.vercel.app',
+  'https://google-auth-demo-i3mwsshrb-lenc95s-projects.vercel.app',
+  'https://saasapp.aiandsons.io'
+];
+
+// Add additional frontend URLs from environment variables
+for (let i = 2; i <= 10; i++) {
+  const additionalUrl = process.env[`FRONTEND_URL_${i}`];
+  if (additionalUrl) {
+    corsOrigins.push(additionalUrl);
+  }
+}
+
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:3000',
-    'https://google-auth-demo-pi.vercel.app',
-    'https://google-auth-demo-lq6ld3kun-lenc95s-projects.vercel.app',
-    'https://google-auth-demo-5wrvx54r2-lenc95s-projects.vercel.app',
-    'https://google-auth-demo-i3mwsshrb-lenc95s-projects.vercel.app',
-    'https://saasapp.aiandsons.io'
-  ],
+  origin: corsOrigins,
   credentials: true
 }));
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
