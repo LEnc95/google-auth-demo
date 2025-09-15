@@ -45,7 +45,8 @@ app.use(cors({
     'https://google-auth-demo-pi.vercel.app',
     'https://google-auth-demo-lq6ld3kun-lenc95s-projects.vercel.app',
     'https://google-auth-demo-5wrvx54r2-lenc95s-projects.vercel.app',
-    'https://google-auth-demo-i3mwsshrb-lenc95s-projects.vercel.app'
+    'https://google-auth-demo-i3mwsshrb-lenc95s-projects.vercel.app',
+    'https://saasapp.aiandsons.io'
   ],
   credentials: true
 }));
