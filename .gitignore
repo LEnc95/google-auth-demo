@@ -13,3 +13,7 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Backups / sensitive exports
+users-backup.json
+**/users-backup.json
